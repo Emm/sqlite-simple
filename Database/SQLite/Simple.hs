@@ -67,7 +67,7 @@ module Database.SQLite.Simple (
 import           Control.Applicative
 import           Control.Exception
   ( Exception, throw, throwIO, bracket )
-import           Control.Monad (void, when)
+import           Control.Monad (void, when, forM, sequence)
 import           Control.Monad.Trans.Reader
 import           Control.Monad.Trans.State.Strict
 import qualified Data.Text as T
@@ -81,6 +81,7 @@ import           Database.SQLite.Simple.Internal
 import           Database.SQLite.Simple.Ok
 import           Database.SQLite.Simple.ToRow (ToRow(..))
 import           Database.SQLite.Simple.FromRow
+import           Debug.Trace
 
 -- | Exception thrown if a 'Query' was malformed.
 -- This may occur if the number of \'@?@\' characters in the query
@@ -210,17 +211,48 @@ fold_ conn query initalState action =
   withStatement conn query $ \stmt ->
     doFold stmt initalState action
 
+
+-- Builds 'toRow', a specialized version of 'columns' for a given statement.
+-- This lets us pattern-match on the column type only once
+buildToRow :: Base.Statement -> IO (Base.Statement -> IO [Base.SQLData])
+buildToRow stmt = do
+  columnCount <- Base.columnCount stmt
+  -- Turns [IO (Base.Statement -> IO Base.SQLData)] into [Base.Statement -> IO Base.SQLData]
+  transformers <- sequence $ buildTransformers stmt columnCount
+  return $ \stmt' -> sequence $ map ($ stmt') transformers
+
+-- Generates a list of callbacks calling the data constructors in the right
+-- position for this statement
+buildTransformers :: Base.Statement -> Base.ColumnCount -> [IO (Base.Statement -> IO Base.SQLData)]
+buildTransformers stmt columnCount =
+  map
+    (
+      \idx -> do
+        columnType <- Base.columnType stmt idx
+        case columnType of
+          Base.IntegerColumn  -> return $ \stmt -> Base.SQLInteger <$> Base.columnInt64 stmt idx
+          Base.FloatColumn    -> return $ \stmt -> Base.SQLFloat <$> Base.columnDouble stmt idx
+          Base.TextColumn     -> return $ \stmt -> Base.SQLText <$> Base.columnText stmt idx
+          Base.BlobColumn     -> return $ \stmt -> Base.SQLBlob <$> Base.columnBlob stmt idx
+          Base.NullColumn     -> return $ \stmt -> return Base.SQLNull
+    )
+    [0..columnCount - 1]
+
 doFold :: (FromRow row) => Base.Statement ->  a -> (a -> row -> IO a) -> IO a
-doFold stmt initState action = loop 0 initState
+doFold stmt initState action = do
+  loop 0 initState undefined
   where
-    loop i val = do
+    loop i val maybeToRow = do
       statRes <- Base.step stmt
       case statRes of
         Base.Row    -> do
-          rowRes <- Base.columns stmt
+          -- Need to wait for the first row before calling buildToRow, otherwise
+          -- the function returned will be invalid
+          actualToRow <- if i == 0 then (buildToRow stmt) else return $ maybeToRow
+          rowRes <- actualToRow stmt
           res <- convertRow rowRes i (length rowRes)
           val' <- action val res
-          loop (i+1) val'
+          loop (i+1) val' actualToRow
         Base.Done   -> return val
 
 finishQuery :: (FromRow r) => Result -> IO [r]
