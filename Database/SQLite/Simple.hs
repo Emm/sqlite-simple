@@ -161,13 +161,15 @@ query :: (ToRow q, FromRow r)
          => Connection -> Query -> q -> IO [r]
 query conn templ qs =
   withStatement conn templ $ \stmt ->
-    withBind templ stmt (toRow qs) (stepStmt stmt >>= finishQuery)
+    withBind templ stmt (toRow qs)
+      (doFold stmt [] (\acc e -> return (e : acc)) >>= return . reverse)
 
 -- | A version of 'query' that does not perform query substitution.
 query_ :: (FromRow r) => Connection -> Query -> IO [r]
-query_ conn (Query que) = do
-  result <- exec conn que
-  finishQuery result
+query_ conn query = do
+  withStatement conn query $ \stmt ->
+    (doFold stmt [] (\acc e -> return (e : acc)) >>= return . reverse)
+
 
 -- | A version of 'execute' that does not perform query substitution.
 execute_ :: Connection -> Query -> IO ()
