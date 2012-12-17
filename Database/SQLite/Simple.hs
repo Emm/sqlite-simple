@@ -67,7 +67,7 @@ module Database.SQLite.Simple (
 import           Control.Applicative
 import           Control.Exception
   ( Exception, throw, throwIO, bracket )
-import           Control.Monad (void, when, forM, sequence)
+import           Control.Monad (void, when)
 import           Control.Monad.Trans.Reader
 import           Control.Monad.Trans.State.Strict
 import qualified Data.Text as T
@@ -81,7 +81,6 @@ import           Database.SQLite.Simple.Internal
 import           Database.SQLite.Simple.Ok
 import           Database.SQLite.Simple.ToRow (ToRow(..))
 import           Database.SQLite.Simple.FromRow
-import           Debug.Trace
 
 -- | Exception thrown if a 'Query' was malformed.
 -- This may occur if the number of \'@?@\' characters in the query
@@ -234,7 +233,7 @@ buildTransformers stmt columnCount =
           Base.FloatColumn    -> return $ \stmt -> Base.SQLFloat <$> Base.columnDouble stmt idx
           Base.TextColumn     -> return $ \stmt -> Base.SQLText <$> Base.columnText stmt idx
           Base.BlobColumn     -> return $ \stmt -> Base.SQLBlob <$> Base.columnBlob stmt idx
-          Base.NullColumn     -> return $ \stmt -> return Base.SQLNull
+          Base.NullColumn     -> return $ \_ -> return Base.SQLNull
     )
     [0..columnCount - 1]
 
