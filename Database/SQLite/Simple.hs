@@ -241,7 +241,7 @@ buildTransformers stmt columnCount =
 
 doFold :: (FromRow row) => Base.Statement ->  a -> (a -> row -> IO a) -> IO a
 doFold stmt initState action = do
-  loop 0 initState undefined
+  loop 0 initState Nothing
   where
     loop i val maybeToRow = do
       statRes <- Base.step stmt
@@ -249,11 +249,13 @@ doFold stmt initState action = do
         Base.Row    -> do
           -- Need to wait for the first row before calling buildToRow, otherwise
           -- the function returned will be invalid
-          actualToRow <- if i == 0 then (buildToRow stmt) else return $ maybeToRow
-          rowRes <- actualToRow stmt
+          toRow <- case maybeToRow of
+            Just toRow_ -> return toRow_
+            Nothing     -> buildToRow stmt
+          rowRes <- toRow stmt
           res <- convertRow rowRes i (length rowRes)
           val' <- action val res
-          loop (i+1) val' actualToRow
+          loop (i+1) val' $ Just toRow
         Base.Done   -> return val
 
 finishQuery :: (FromRow r) => Result -> IO [r]
